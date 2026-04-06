@@ -18,15 +18,22 @@ interface AuthContextType {
 // Create the context with a default of null
 const AuthContext = createContext<AuthContextType | null>(null)
 
+const STORAGE_KEY = 'auth_user'
+
 // Provider wraps the whole app and holds the user state
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
+  const [user, setUser] = useState<User | null>(() => {
+    const stored = localStorage.getItem(STORAGE_KEY)
+    return stored ? JSON.parse(stored) : null
+  })
 
   function login(user: User) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(user))
     setUser(user)
   }
 
   function logout() {
+    localStorage.removeItem(STORAGE_KEY)
     setUser(null)
   }
 
