@@ -63,7 +63,17 @@ app.post('/register', async (req, res) => {
       data: { username, email, password: hashedPassword },
     })
 
-    res.status(201).json({ id: user.id, username: user.username, email: user.email })
+    if (!JWT_SECRET) {
+      return res.status(500).json({ error: 'Server configuration error' })
+    }
+
+    const token = jwt.sign(
+      { id: user.id, username: user.username, role: user.role },
+      JWT_SECRET,
+      { expiresIn: '1d' }
+    )
+
+    res.status(201).json({ token, id: user.id, username: user.username, role: user.role })
   } catch (err) {
     if ((err as any).code === 'P2002') {
       // Prisma unique constraint violation
@@ -104,7 +114,7 @@ app.post('/login', async (req, res) => {
       { expiresIn: '1d' }
     )
 
-    res.json({ token })
+    res.json({ token, id: user.id, username: user.username, role: user.role })
   } catch {
     res.status(500).json({ error: 'Server error' })
   }

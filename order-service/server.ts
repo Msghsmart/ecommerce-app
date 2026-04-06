@@ -129,6 +129,20 @@ app.post("/orders", requireAuth, async (req, res) => {
   }
 });
 
+// GET /orders/all  — get all orders (admin only)
+app.get("/orders/all", requireAdmin, async (req, res) => {
+  try {
+    const orders = await prisma.order.findMany({
+      include: { items: true },
+      orderBy: { createdAt: "desc" },
+    });
+
+    res.json(orders);
+  } catch {
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
 // GET /orders  — get my orders
 app.get("/orders", requireAuth, async (req, res) => {
   try {
