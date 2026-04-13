@@ -1,10 +1,15 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { useCart } from '../context/CartContext'
 
 export default function Navbar() {
   const { user, logout } = useAuth()
+  const { items } = useCart()
   const navigate = useNavigate()
+
+  // Total number of individual items in the cart (sum of all quantities)
+  const cartCount = items.reduce((sum, item) => sum + item.quantity, 0)
   const [adminOpen, setAdminOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
@@ -32,6 +37,16 @@ export default function Navbar() {
       <div className="flex items-center gap-4">
         <Link to="/" className="hover:text-gray-300">
           Products
+        </Link>
+
+        {/* Cart icon — visible to everyone */}
+        <Link to="/cart" className="relative hover:text-gray-300">
+          Cart
+          {cartCount > 0 && (
+            <span className="absolute -top-2 -right-4 bg-blue-500 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+              {cartCount}
+            </span>
+          )}
         </Link>
 
         {user ? (

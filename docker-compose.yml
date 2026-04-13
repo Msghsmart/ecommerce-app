@@ -91,6 +91,22 @@ services:
       kafka:
         condition: service_healthy
 
+  review-service:
+    build: ./review-service
+    ports:
+      - "3004:3004"
+    environment:
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/reviewdb
+      JWT_SECRET: supersecretkey
+      PORT: 3004
+      ORDER_SERVICE_URL: http://order-service:3003
+    depends_on:
+      postgres:
+        condition: service_healthy
+      order-service:
+        condition: service_started
+    command: sh -c "npx prisma migrate deploy && npm start"
+
   api-gateway:
     build: ./api-gateway
     ports:
@@ -100,10 +116,12 @@ services:
       USER_SERVICE_URL: http://user-service:3001
       PRODUCT_SERVICE_URL: http://product-service:3002
       ORDER_SERVICE_URL: http://order-service:3003
+      REVIEW_SERVICE_URL: http://review-service:3004
     depends_on:
       - user-service
       - product-service
       - order-service
+      - review-service
 
 volumes:
   postgres-data:

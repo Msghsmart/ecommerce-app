@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { useNavigate } from "react-router-dom";
+import { useCart } from "../context/CartContext";
+import { useNavigate, Link } from "react-router-dom";
 
 interface Product {
   id: number;
@@ -18,17 +19,33 @@ interface Pagination {
   totalPages: number;
 }
 
+interface RatingSummary {
+  average: number | null;
+  count: number;
+}
+
+function Stars({ rating }: { rating: number }) {
+  const filled = Math.round(rating);
+  return (
+    <span className="text-yellow-400">
+      {"★".repeat(filled)}
+      {"☆".repeat(5 - filled)}
+    </span>
+  );
+}
+
 export default function ProductsPage() {
   const { user } = useAuth();
+  const { addToCart } = useCart();
   const navigate = useNavigate();
 
   const [products, setProducts] = useState<Product[]>([]);
   const [pagination, setPagination] = useState<Pagination | null>(null);
+  const [ratings, setRatings] = useState<Record<number, RatingSummary>>({});
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [orderingId, setOrderingId] = useState<number | null>(null);
-  const [message, setMessage] = useState("");
+  const [addedId, setAddedId] = useState<number | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -42,6 +59,21 @@ export default function ProductsPage() {
       setProducts(data.data);
       setPagination(data.pagination);
       setLoading(false);
+
+      // Fetch ratings for all visible products in parallel
+      const ratingResults = await Promise.all(
+        data.data.map((p: Product) =>
+          fetch(`/api/reviews/product/${p.id}`).then((r) => r.json())
+        )
+      );
+      const ratingMap: Record<number, RatingSummary> = {};
+      data.data.forEach((p: Product, i: number) => {
+        ratingMap[p.id] = {
+          average: ratingResults[i].average,
+          count: ratingResults[i].count,
+        };
+      });
+      setRatings(ratingMap);
     }
     load();
   }, [page, search]);
@@ -51,32 +83,22 @@ export default function ProductsPage() {
     setPage(1);
   }
 
-  async function handleOrder(product: Product) {
+  function handleAddToCart(product: Product) {
     if (!user) {
       navigate("/login");
       return;
     }
 
-    setOrderingId(product.id);
-    setMessage("");
-
-    const res = await fetch("/api/orders", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${user.token}`,
-      },
-      body: JSON.stringify({ items: [{ productId: product.id, quantity: 1 }] }),
+    addToCart({
+      id: product.id,
+      name: product.name,
+      price: product.price,
+      stock: product.stock,
     });
 
-    const data = await res.json();
-    setOrderingId(null);
-
-    if (!res.ok) {
-      setMessage(`Error: ${data.error}`);
-    } else {
-      setMessage(`Order #${data.id} placed for ${product.name}!`);
-    }
+    // Briefly show "Added!" on the button, then reset
+    setAddedId(product.id);
+    setTimeout(() => setAddedId(null), 1000);
   }
 
   return (
@@ -112,15 +134,6 @@ export default function ProductsPage() {
         )}
       </form>
 
-      {/* Flash message */}
-      {message && (
-        <p
-          className={`mb-4 text-sm font-medium ${message.startsWith("Error") ? "text-red-500" : "text-green-600"}`}
-        >
-          {message}
-        </p>
-      )}
-
       {/* Grid */}
       {loading ? (
         <p className="text-gray-500">Loading...</p>
@@ -134,7 +147,12 @@ export default function ProductsPage() {
               className="border rounded-lg p-4 bg-white shadow-sm flex flex-col gap-2"
             >
               <div className="flex items-start justify-between">
-                <h2 className="font-semibold text-gray-800">{product.name}</h2>
+                <Link
+                  to={`/products/${product.id}`}
+                  className="font-semibold text-gray-800 hover:text-blue-600 hover:underline"
+                >
+                  {product.name}
+                </Link>
                 <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded">
                   {product.category}
                 </span>
@@ -150,17 +168,26 @@ export default function ProductsPage() {
                   <p className="text-xs text-gray-400">
                     {product.stock} in stock
                   </p>
+                  {ratings[product.id]?.average !== null &&
+                    ratings[product.id]?.average !== undefined && (
+                      <div className="flex items-center gap-1 mt-0.5">
+                        <Stars rating={ratings[product.id].average!} />
+                        <span className="text-xs text-gray-400">
+                          ({ratings[product.id].count})
+                        </span>
+                      </div>
+                    )}
                 </div>
                 <button
-                  onClick={() => handleOrder(product)}
-                  disabled={orderingId === product.id || product.stock === 0}
+                  onClick={() => handleAddToCart(product)}
+                  disabled={product.stock === 0}
                   className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white px-3 py-1.5 rounded text-sm"
                 >
-                  {orderingId === product.id
-                    ? "Ordering..."
-                    : product.stock === 0
-                      ? "Out of Stock"
-                      : "Buy Now"}
+                  {product.stock === 0
+                    ? "Out of Stock"
+                    : addedId === product.id
+                      ? "Added!"
+                      : "Add to Cart"}
                 </button>
               </div>
             </div>

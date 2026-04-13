@@ -34,6 +34,15 @@ app.use(
   }),
 );
 
+app.use(
+  createProxyMiddleware({
+    pathFilter: "/api/reviews",
+    target: process.env.REVIEW_SERVICE_URL,
+    changeOrigin: true,
+    pathRewrite: { "^/api/reviews": "/reviews" },
+  }),
+);
+
 // ── 404 for unmatched routes ──────────────────────────────────────────────────
 
 app.use((req, res) => {
@@ -47,4 +56,5 @@ app.listen(PORT, () => {
   console.log(`  /api/users    → ${process.env.USER_SERVICE_URL}`);
   console.log(`  /api/products → ${process.env.PRODUCT_SERVICE_URL}`);
   console.log(`  /api/orders   → ${process.env.ORDER_SERVICE_URL}`);
+  console.log(`  /api/reviews  → ${process.env.REVIEW_SERVICE_URL}`);
 });
