@@ -81,6 +81,13 @@ export default function Navbar() {
                     >
                       Manage Orders
                     </Link>
+                    <Link
+                      to="/admin/reviews"
+                      onClick={() => setAdminOpen(false)}
+                      className="block px-4 py-2 text-sm hover:bg-gray-100"
+                    >
+                      Manage Reviews
+                    </Link>
                   </div>
                 )}
               </div>

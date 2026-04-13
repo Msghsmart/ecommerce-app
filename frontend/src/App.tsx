@@ -9,6 +9,7 @@ import OrdersPage from './pages/OrdersPage'
 import CartPage from './pages/CartPage'
 import AdminProductsPage from './pages/admin/AdminProductsPage'
 import AdminOrdersPage from './pages/admin/AdminOrdersPage'
+import AdminReviewsPage from './pages/admin/AdminReviewsPage'
 import ProductDetailPage from './pages/ProductDetailPage'
 
 export default function App() {
@@ -26,6 +27,7 @@ export default function App() {
             <Route path="/products/:id" element={<ProductDetailPage />} />
             <Route path="/admin/products" element={<AdminProductsPage />} />
             <Route path="/admin/orders" element={<AdminOrdersPage />} />
+            <Route path="/admin/reviews" element={<AdminReviewsPage />} />
           </Routes>
         </BrowserRouter>
       </CartProvider>

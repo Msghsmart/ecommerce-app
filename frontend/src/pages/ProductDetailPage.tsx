@@ -52,6 +52,14 @@ export default function ProductDetailPage() {
   const [message, setMessage] = useState("");
   const [addedToCart, setAddedToCart] = useState(false);
 
+  async function handleDeleteReview(reviewId: number) {
+    const res = await fetch(`/api/reviews/${reviewId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${user!.token}` },
+    });
+    if (res.ok) await loadReviews();
+  }
+
   // Load reviews separately so we can refresh after submit
   async function loadReviews() {
     const res = await fetch(`/api/reviews/product/${id}`);
@@ -182,10 +190,21 @@ export default function ProductDetailPage() {
               className="border rounded-lg p-4 bg-white shadow-sm"
             >
               <div className="flex items-center justify-between mb-1">
-                <span className="font-medium text-gray-700">
-                  {review.username}
-                </span>
-                <Stars rating={review.rating} />
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-gray-700">
+                    {review.username}
+                  </span>
+                  <Stars rating={review.rating} />
+                </div>
+                {(user?.role === "admin" || user?.id === review.userId) && (
+                  <button
+                    onClick={() => handleDeleteReview(review.id)}
+                    className="text-red-400 hover:text-red-600 text-xs font-bold shrink-0"
+                    title="Delete review"
+                  >
+                    ✕
+                  </button>
+                )}
               </div>
               {review.comment && (
                 <p className="text-sm text-gray-500">{review.comment}</p>
