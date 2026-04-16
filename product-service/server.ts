@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import pg from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "./generated/prisma/client.ts";
+import Redis from "ioredis";
 
 declare global {
   namespace Express {
@@ -17,8 +18,10 @@ const app = express();
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
+const redis = new Redis(process.env.REDIS_URL!);
 const PORT = process.env.PORT || 3002;
 const JWT_SECRET = process.env.JWT_SECRET;
+const CACHE_TTL = 60; // seconds
 
 app.use(express.json());
 
@@ -54,6 +57,12 @@ function requireAdmin(req: Request, res: Response, next: NextFunction) {
   });
 }
 
+// Deletes all cached product list pages
+async function invalidateProductListCache() {
+  const keys = await redis.keys("products:*");
+  if (keys.length > 0) await redis.del(...keys);
+}
+
 // ── Routes ────────────────────────────────────────────────────────────────────
 
 // GET /products  (public)
@@ -63,7 +72,15 @@ app.get("/products", async (req, res) => {
   const search = (req.query.search as string) || "";
   const skip = (page - 1) * limit;
 
+  const cacheKey = `products:${page}:${limit}:${search}`;
+
   try {
+    // Cache-aside: check cache first
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+      return res.json(JSON.parse(cached));
+    }
+
     const where = search
       ? {
           OR: [
@@ -83,7 +100,7 @@ app.get("/products", async (req, res) => {
       prisma.product.count({ where }),
     ]);
 
-    res.json({
+    const result = {
       data: products,
       pagination: {
         total,
@@ -91,7 +108,10 @@ app.get("/products", async (req, res) => {
         limit,
         totalPages: Math.ceil(total / limit),
       },
-    });
+    };
+
+    await redis.set(cacheKey, JSON.stringify(result), "EX", CACHE_TTL);
+    res.json(result);
   } catch {
     res.status(500).json({ error: "Server error" });
   }
@@ -100,14 +120,22 @@ app.get("/products", async (req, res) => {
 // GET /products/:id  (public)
 app.get("/products/:id", async (req, res) => {
   const id = parseInt(req.params.id as string);
+  const cacheKey = `product:${id}`;
 
   try {
+    // Cache-aside: check cache first
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+      return res.json(JSON.parse(cached));
+    }
+
     const product = await prisma.product.findUnique({ where: { id } });
 
     if (!product) {
       return res.status(404).json({ error: "Product not found" });
     }
 
+    await redis.set(cacheKey, JSON.stringify(product), "EX", CACHE_TTL);
     res.json(product);
   } catch {
     res.status(500).json({ error: "Server error" });
@@ -127,6 +155,7 @@ app.post("/products", requireAdmin, async (req, res) => {
       data: { name, description, price, stock, category },
     });
 
+    await invalidateProductListCache();
     res.status(201).json(product);
   } catch {
     res.status(500).json({ error: "Server error" });
@@ -150,6 +179,10 @@ app.put("/products/:id", requireAdmin, async (req, res) => {
       },
     });
 
+    await Promise.all([
+      redis.del(`product:${id}`),
+      invalidateProductListCache(),
+    ]);
     res.json(product);
   } catch (err) {
     if ((err as any).code === "P2025") {
@@ -165,6 +198,11 @@ app.delete("/products/:id", requireAdmin, async (req, res) => {
 
   try {
     await prisma.product.delete({ where: { id } });
+
+    await Promise.all([
+      redis.del(`product:${id}`),
+      invalidateProductListCache(),
+    ]);
     res.json({ message: "Product deleted" });
   } catch (err) {
     if ((err as any).code === "P2025") {

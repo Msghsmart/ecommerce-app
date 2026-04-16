@@ -16,6 +16,16 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   kafka:
     image: apache/kafka:3.7.0
     environment:
@@ -59,8 +69,11 @@ services:
       DATABASE_URL: postgresql://postgres:password@postgres:5432/productdb
       JWT_SECRET: supersecretkey
       PORT: 3002
+      REDIS_URL: redis://redis:6379
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     command: sh -c "npx prisma migrate deploy && npx prisma db seed && npm start"
 
@@ -100,11 +113,14 @@ services:
       JWT_SECRET: supersecretkey
       PORT: 3004
       ORDER_SERVICE_URL: http://order-service:3003
+      REDIS_URL: redis://redis:6379
     depends_on:
       postgres:
         condition: service_healthy
       order-service:
         condition: service_started
+      redis:
+        condition: service_healthy
     command: sh -c "npx prisma migrate deploy && npm start"
 
   api-gateway:
@@ -117,11 +133,13 @@ services:
       PRODUCT_SERVICE_URL: http://product-service:3002
       ORDER_SERVICE_URL: http://order-service:3003
       REVIEW_SERVICE_URL: http://review-service:3004
+      REDIS_URL: redis://redis:6379
     depends_on:
       - user-service
       - product-service
       - order-service
       - review-service
+      - redis
 
 volumes:
   postgres-data:

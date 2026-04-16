@@ -4,6 +4,7 @@ import jwt from "jsonwebtoken";
 import pg from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "./generated/prisma/client.ts";
+import Redis from "ioredis";
 
 declare global {
   namespace Express {
@@ -17,9 +18,11 @@ const app = express();
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
+const redis = new Redis(process.env.REDIS_URL!);
 const PORT = process.env.PORT || 3004;
 const JWT_SECRET = process.env.JWT_SECRET;
 const ORDER_SERVICE_URL = process.env.ORDER_SERVICE_URL;
+const CACHE_TTL = 60; // seconds
 
 app.use(express.json());
 
@@ -77,6 +80,8 @@ app.post("/reviews", requireAuth, async (req, res) => {
         comment: comment || null,
       },
     });
+
+    await redis.del(`reviews:product:${productId}`);
     res.status(201).json(review);
   } catch (err: any) {
     if (err.code === "P2002") {
@@ -89,8 +94,15 @@ app.post("/reviews", requireAuth, async (req, res) => {
 // GET /reviews/product/:productId — get all reviews + average rating for a product
 app.get("/reviews/product/:productId", async (req, res) => {
   const productId = parseInt(req.params.productId);
+  const cacheKey = `reviews:product:${productId}`;
 
   try {
+    // Cache-aside: check cache first
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+      return res.json(JSON.parse(cached));
+    }
+
     const reviews = await prisma.review.findMany({
       where: { productId },
       orderBy: { createdAt: "desc" },
@@ -101,7 +113,9 @@ app.get("/reviews/product/:productId", async (req, res) => {
         ? reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length
         : null;
 
-    res.json({ reviews, average, count: reviews.length });
+    const result = { reviews, average, count: reviews.length };
+    await redis.set(cacheKey, JSON.stringify(result), "EX", CACHE_TTL);
+    res.json(result);
   } catch {
     res.status(500).json({ error: "Server error" });
   }
@@ -120,6 +134,7 @@ app.delete("/reviews/:id", requireAuth, async (req, res) => {
     }
 
     await prisma.review.delete({ where: { id } });
+    await redis.del(`reviews:product:${review.productId}`);
     res.json({ message: "Review deleted" });
   } catch {
     res.status(500).json({ error: "Server error" });
