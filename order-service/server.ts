@@ -5,6 +5,7 @@ import pg from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "./generated/prisma/client.ts";
 import { Kafka } from "kafkajs";
+import logger from "./logger.ts";
 
 declare global {
   namespace Express {
@@ -28,9 +29,24 @@ const kafka = new Kafka({ brokers: [process.env.KAFKA_BROKER || "localhost:9092"
 const producer = kafka.producer();
 
 await producer.connect();
-console.log("Kafka producer connected");
+logger.info("Kafka producer connected");
 
 app.use(express.json());
+
+// ── Request logging ───────────────────────────────────────────────────────────
+
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    logger.info(`${req.method} ${req.path}`, {
+      method: req.method,
+      path: req.path,
+      status: res.statusCode,
+      duration: `${Date.now() - start}ms`,
+    });
+  });
+  next();
+});
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 
@@ -123,8 +139,12 @@ app.post("/orders", requireAuth, async (req, res) => {
       messages: [{ value: JSON.stringify({ orderId: order.id, userId: order.userId, total: order.total }) }],
     });
 
+    logger.info("order placed", { orderId: order.id, userId: order.userId, total: order.total });
+    logger.info("Kafka event sent", { topic: "order.placed", orderId: order.id });
+
     res.status(201).json(order);
-  } catch {
+  } catch (err) {
+    logger.error("place order error", { error: String(err) });
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -138,7 +158,8 @@ app.get("/orders/all", requireAdmin, async (req, res) => {
     });
 
     res.json(orders);
-  } catch {
+  } catch (err) {
+    logger.error("get all orders error", { error: String(err) });
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -153,7 +174,8 @@ app.get("/orders", requireAuth, async (req, res) => {
     });
 
     res.json(orders);
-  } catch {
+  } catch (err) {
+    logger.error("get orders error", { error: String(err) });
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -178,7 +200,8 @@ app.get("/orders/:id", requireAuth, async (req, res) => {
     }
 
     res.json(order);
-  } catch {
+  } catch (err) {
+    logger.error("get order error", { id, error: String(err) });
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -209,11 +232,13 @@ app.put("/orders/:id/status", requireAdmin, async (req, res) => {
       include: { items: true },
     });
 
+    logger.info("order status updated", { orderId: id, status });
     res.json(order);
   } catch (err) {
     if ((err as any).code === "P2025") {
       return res.status(404).json({ error: "Order not found" });
     }
+    logger.error("update order status error", { id, error: String(err) });
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -221,5 +246,5 @@ app.put("/orders/:id/status", requireAdmin, async (req, res) => {
 // ── Start ─────────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
-  console.log(`order-service running on port ${PORT}`);
+  logger.info("order-service started", { port: PORT });
 });

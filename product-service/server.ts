@@ -5,6 +5,7 @@ import pg from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "./generated/prisma/client.ts";
 import Redis from "ioredis";
+import logger from "./logger.ts";
 
 declare global {
   namespace Express {
@@ -24,6 +25,21 @@ const JWT_SECRET = process.env.JWT_SECRET;
 const CACHE_TTL = 60; // seconds
 
 app.use(express.json());
+
+// ── Request logging ───────────────────────────────────────────────────────────
+
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    logger.info(`${req.method} ${req.path}`, {
+      method: req.method,
+      path: req.path,
+      status: res.statusCode,
+      duration: `${Date.now() - start}ms`,
+    });
+  });
+  next();
+});
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 
@@ -75,11 +91,13 @@ app.get("/products", async (req, res) => {
   const cacheKey = `products:${page}:${limit}:${search}`;
 
   try {
-    // Cache-aside: check cache first
     const cached = await redis.get(cacheKey);
     if (cached) {
+      logger.info("cache hit", { key: cacheKey });
       return res.json(JSON.parse(cached));
     }
+
+    logger.info("cache miss", { key: cacheKey });
 
     const where = search
       ? {
@@ -112,7 +130,8 @@ app.get("/products", async (req, res) => {
 
     await redis.set(cacheKey, JSON.stringify(result), "EX", CACHE_TTL);
     res.json(result);
-  } catch {
+  } catch (err) {
+    logger.error("get products error", { error: String(err) });
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -123,11 +142,13 @@ app.get("/products/:id", async (req, res) => {
   const cacheKey = `product:${id}`;
 
   try {
-    // Cache-aside: check cache first
     const cached = await redis.get(cacheKey);
     if (cached) {
+      logger.info("cache hit", { key: cacheKey });
       return res.json(JSON.parse(cached));
     }
+
+    logger.info("cache miss", { key: cacheKey });
 
     const product = await prisma.product.findUnique({ where: { id } });
 
@@ -137,7 +158,8 @@ app.get("/products/:id", async (req, res) => {
 
     await redis.set(cacheKey, JSON.stringify(product), "EX", CACHE_TTL);
     res.json(product);
-  } catch {
+  } catch (err) {
+    logger.error("get product error", { id, error: String(err) });
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -155,9 +177,11 @@ app.post("/products", requireAdmin, async (req, res) => {
       data: { name, description, price, stock, category },
     });
 
+    logger.info("product created", { id: product.id, name: product.name });
     await invalidateProductListCache();
     res.status(201).json(product);
-  } catch {
+  } catch (err) {
+    logger.error("create product error", { error: String(err) });
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -179,6 +203,7 @@ app.put("/products/:id", requireAdmin, async (req, res) => {
       },
     });
 
+    logger.info("product updated", { id });
     await Promise.all([
       redis.del(`product:${id}`),
       invalidateProductListCache(),
@@ -188,6 +213,7 @@ app.put("/products/:id", requireAdmin, async (req, res) => {
     if ((err as any).code === "P2025") {
       return res.status(404).json({ error: "Product not found" });
     }
+    logger.error("update product error", { id, error: String(err) });
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -199,6 +225,7 @@ app.delete("/products/:id", requireAdmin, async (req, res) => {
   try {
     await prisma.product.delete({ where: { id } });
 
+    logger.info("product deleted", { id });
     await Promise.all([
       redis.del(`product:${id}`),
       invalidateProductListCache(),
@@ -208,6 +235,7 @@ app.delete("/products/:id", requireAdmin, async (req, res) => {
     if ((err as any).code === "P2025") {
       return res.status(404).json({ error: "Product not found" });
     }
+    logger.error("delete product error", { id, error: String(err) });
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -215,5 +243,5 @@ app.delete("/products/:id", requireAdmin, async (req, res) => {
 // ── Start ─────────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
-  console.log(`product-service running on port ${PORT}`);
+  logger.info("product-service started", { port: PORT });
 });

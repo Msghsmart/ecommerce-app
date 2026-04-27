@@ -2,6 +2,7 @@ import "dotenv/config";
 import express, { Request, Response, NextFunction } from "express";
 import { createProxyMiddleware } from "http-proxy-middleware";
 import Redis from "ioredis";
+import logger from "./logger.ts";
 
 const app = express();
 const redis = new Redis(process.env.REDIS_URL!);
@@ -9,6 +10,21 @@ const PORT = process.env.PORT || 3000;
 
 const RATE_LIMIT_WINDOW = 60;  // seconds
 const RATE_LIMIT_MAX = 100;    // requests per window
+
+// ── Request logging ───────────────────────────────────────────────────────────
+
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    logger.info(`${req.method} ${req.path}`, {
+      method: req.method,
+      path: req.path,
+      status: res.statusCode,
+      duration: `${Date.now() - start}ms`,
+    });
+  });
+  next();
+});
 
 // ── Rate Limiting ─────────────────────────────────────────────────────────────
 
@@ -23,6 +39,7 @@ async function rateLimiter(req: Request, res: Response, next: NextFunction) {
   }
 
   if (count > RATE_LIMIT_MAX) {
+    logger.warn("rate limit exceeded", { ip, count });
     return res.status(429).json({ error: "Too many requests. Try again in a minute." });
   }
 
@@ -78,9 +95,13 @@ app.use((req, res) => {
 // ── Start ─────────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
-  console.log(`api-gateway running on port ${PORT}`);
-  console.log(`  /api/users    → ${process.env.USER_SERVICE_URL}`);
-  console.log(`  /api/products → ${process.env.PRODUCT_SERVICE_URL}`);
-  console.log(`  /api/orders   → ${process.env.ORDER_SERVICE_URL}`);
-  console.log(`  /api/reviews  → ${process.env.REVIEW_SERVICE_URL}`);
+  logger.info("api-gateway started", {
+    port: PORT,
+    routes: {
+      "/api/users":    process.env.USER_SERVICE_URL,
+      "/api/products": process.env.PRODUCT_SERVICE_URL,
+      "/api/orders":   process.env.ORDER_SERVICE_URL,
+      "/api/reviews":  process.env.REVIEW_SERVICE_URL,
+    },
+  });
 });

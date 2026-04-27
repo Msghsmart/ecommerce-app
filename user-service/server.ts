@@ -5,6 +5,7 @@ import jwt from 'jsonwebtoken'
 import pg from 'pg'
 import { PrismaPg } from '@prisma/adapter-pg'
 import { PrismaClient } from './generated/prisma/client.ts'
+import logger from './logger.ts'
 
 declare global {
   namespace Express {
@@ -22,6 +23,21 @@ const PORT = process.env.PORT || 3001
 const JWT_SECRET = process.env.JWT_SECRET
 
 app.use(express.json())
+
+// ── Request logging ───────────────────────────────────────────────────────────
+
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const start = Date.now()
+  res.on('finish', () => {
+    logger.info(`${req.method} ${req.path}`, {
+      method: req.method,
+      path: req.path,
+      status: res.statusCode,
+      duration: `${Date.now() - start}ms`,
+    })
+  })
+  next()
+})
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 
@@ -73,12 +89,14 @@ app.post('/register', async (req, res) => {
       { expiresIn: '1d' }
     )
 
+    logger.info('user registered', { userId: user.id, username })
     res.status(201).json({ token, id: user.id, username: user.username, role: user.role })
   } catch (err) {
     if ((err as any).code === 'P2002') {
-      // Prisma unique constraint violation
+      logger.warn('registration failed - duplicate', { username, email })
       return res.status(409).json({ error: 'Username or email already taken' })
     }
+    logger.error('register error', { error: String(err) })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -99,12 +117,14 @@ app.post('/login', async (req, res) => {
     const user = await prisma.user.findUnique({ where: { email } })
 
     if (!user) {
+      logger.warn('failed login attempt', { email })
       return res.status(401).json({ error: 'Invalid credentials' })
     }
 
     const match = await bcrypt.compare(password, user.password)
 
     if (!match) {
+      logger.warn('failed login attempt', { email })
       return res.status(401).json({ error: 'Invalid credentials' })
     }
 
@@ -114,8 +134,10 @@ app.post('/login', async (req, res) => {
       { expiresIn: '1d' }
     )
 
+    logger.info('user logged in', { userId: user.id, username: user.username })
     res.json({ token, id: user.id, username: user.username, role: user.role })
-  } catch {
+  } catch (err) {
+    logger.error('login error', { error: String(err) })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -133,7 +155,8 @@ app.get('/profile', requireAuth, async (req, res) => {
     }
 
     res.json(user)
-  } catch {
+  } catch (err) {
+    logger.error('profile error', { error: String(err) })
     res.status(500).json({ error: 'Server error' })
   }
 })
@@ -141,5 +164,5 @@ app.get('/profile', requireAuth, async (req, res) => {
 // ── Start ─────────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
-  console.log(`user-service running on port ${PORT}`)
+  logger.info('user-service started', { port: PORT })
 })

@@ -5,6 +5,7 @@ import pg from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "./generated/prisma/client.ts";
 import Redis from "ioredis";
+import logger from "./logger.ts";
 
 declare global {
   namespace Express {
@@ -25,6 +26,21 @@ const ORDER_SERVICE_URL = process.env.ORDER_SERVICE_URL;
 const CACHE_TTL = 60; // seconds
 
 app.use(express.json());
+
+// ── Request logging ───────────────────────────────────────────────────────────
+
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    logger.info(`${req.method} ${req.path}`, {
+      method: req.method,
+      path: req.path,
+      status: res.statusCode,
+      duration: `${Date.now() - start}ms`,
+    });
+  });
+  next();
+});
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 
@@ -81,12 +97,15 @@ app.post("/reviews", requireAuth, async (req, res) => {
       },
     });
 
+    logger.info("review created", { reviewId: review.id, productId, userId: review.userId });
     await redis.del(`reviews:product:${productId}`);
     res.status(201).json(review);
   } catch (err: any) {
     if (err.code === "P2002") {
+      logger.warn("duplicate review attempt", { userId: req.user.id, productId });
       return res.status(409).json({ error: "You have already reviewed this product" });
     }
+    logger.error("create review error", { error: String(err) });
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -97,11 +116,13 @@ app.get("/reviews/product/:productId", async (req, res) => {
   const cacheKey = `reviews:product:${productId}`;
 
   try {
-    // Cache-aside: check cache first
     const cached = await redis.get(cacheKey);
     if (cached) {
+      logger.info("cache hit", { key: cacheKey });
       return res.json(JSON.parse(cached));
     }
+
+    logger.info("cache miss", { key: cacheKey });
 
     const reviews = await prisma.review.findMany({
       where: { productId },
@@ -116,7 +137,8 @@ app.get("/reviews/product/:productId", async (req, res) => {
     const result = { reviews, average, count: reviews.length };
     await redis.set(cacheKey, JSON.stringify(result), "EX", CACHE_TTL);
     res.json(result);
-  } catch {
+  } catch (err) {
+    logger.error("get reviews error", { productId, error: String(err) });
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -134,9 +156,11 @@ app.delete("/reviews/:id", requireAuth, async (req, res) => {
     }
 
     await prisma.review.delete({ where: { id } });
+    logger.info("review deleted", { reviewId: id, userId: req.user.id });
     await redis.del(`reviews:product:${review.productId}`);
     res.json({ message: "Review deleted" });
-  } catch {
+  } catch (err) {
+    logger.error("delete review error", { id, error: String(err) });
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -144,5 +168,5 @@ app.delete("/reviews/:id", requireAuth, async (req, res) => {
 // ── Start ─────────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
-  console.log(`review-service running on port ${PORT}`);
+  logger.info("review-service started", { port: PORT });
 });
